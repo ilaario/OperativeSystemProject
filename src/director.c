@@ -1,880 +1,802 @@
-//
-// Created by Dario Bonfiglio on 5/22/25.
-//
-
 #include "headers/director.h"
 
-parameter config; // Configuration parameters
+#define DIRECTOR_PATH "./build/director"
+#define OPERATOR_PATH "./build/operator"
+#define USER_PATH "./build/user"
+#define TICKET_PATH "./build/erogatore_ticket"
 
-pid_t pid_et; // PID for the ticket creator
-pid_t *pid_operators; // Array of PIDs for operators
-pid_t *pid_users; // Array of PIDs for users
+static parameter config;
+static counter *counters;
+static worker_info *workers;
+static user_info *users;
+static simulation_stats *stats;
+static service_queue *queues;
 
-counter *counters; // Array of counters
+static int shmid_config = -1;
+static int shmid_counters = -1;
+static int shmid_workers = -1;
+static int shmid_users = -1;
+static int shmid_stats = -1;
+static int shmid_queues = -1;
+static int semid = -1;
+static int msgid = -1;
 
-int msgid; // Message queue ID
+static pid_t ticket_pid = -1;
+static volatile sig_atomic_t shutdown_requested = 0;
 
-int semid; // Semaphore ID
-int semid_log; // Semaphore ID
-int shmid_config; // Shared memory ID for configuration
-int shmid_counters; // Shared memory ID for counters
-
-pthread_t time_receiver_thread;
-
-// Global values for Logging
-int tot_users = 0;
-int tot_serv = 0;
-double avg_serv = 0;
-int tot_nserv = 0;
-double avg_nserv = 0;
-
-double avg_dwtime = 0;
-double avg_twtime = 0;
-
-double avg_ddtime = 0;
-double avg_tdtime = 0;
-
-int daily_users = 0;
-int daily_nserv = 0;
-
-void *time_receiver() {
-    int semid_log = semget(LOGSEM_KEY, 1, IPC_CREAT | 0666);
-    if (semid_log == -1) {
-        exit(EXIT_FAILURE);
-    }
-
-    semctl(semid_log, 0, SETVAL, 1);
-
-    struct msgbuffer_time msg;
-    size_t size;
-
-    while(1){
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid(), IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_dwtime == 0) avg_dwtime = msg.mtext;
-                else avg_dwtime = (avg_dwtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 1, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_dwtime == 0) avg_dwtime = msg.mtext;
-                else avg_dwtime = (avg_dwtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 2, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_dwtime == 0) avg_dwtime = msg.mtext;
-                else avg_dwtime = (avg_dwtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 3, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_dwtime == 0) avg_dwtime = msg.mtext;
-                else avg_dwtime = (avg_dwtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 4, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_dwtime == 0) avg_dwtime = msg.mtext;
-                else avg_dwtime = (avg_dwtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 5, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_dwtime == 0) avg_dwtime = msg.mtext;
-                else avg_dwtime = (avg_dwtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 6, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_dwtime == 0) avg_dwtime = msg.mtext;
-                else avg_dwtime = (avg_dwtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 6 + 1, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_ddtime == 0) avg_ddtime = msg.mtext;
-                else avg_ddtime = (avg_ddtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 6 + 2, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_ddtime == 0) avg_ddtime = msg.mtext;
-                else avg_ddtime = (avg_ddtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 6 + 3, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_ddtime == 0) avg_ddtime = msg.mtext;
-                else avg_ddtime = (avg_ddtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 6 + 4, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_ddtime == 0) avg_ddtime = msg.mtext;
-                else avg_ddtime = (avg_ddtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 6 + 5, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_ddtime == 0) avg_ddtime = msg.mtext;
-                else avg_ddtime = (avg_ddtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        if(semctl(semid_log, 0, GETVAL) > 0) {
-            size = msgrcv(msgid, &msg, sizeof(msg.mtext), 3000 + getpid() + 6 + 6, IPC_NOWAIT);
-            if(size > 0) {
-                if(avg_ddtime == 0) avg_ddtime = msg.mtext;
-                else avg_ddtime = (avg_ddtime + msg.mtext) / 2;
-            } else {
-                if(errno != ENOMSG) {
-                    perror("Unknown error in msgrcv()");
-                    // TODO Kill everything
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-    }
-    return NULL;
+static void handle_director_signal(int signal) {
+    (void) signal;
+    shutdown_requested = 1;
 }
 
-void print_log(void){
+static void cleanup_stale_ipc_resources(void) {
+    int id;
 
-    if (semop(semid_log, &(struct sembuf){0, -1, 0}, 1) == -1) {
-        perror("Error locking semaphore");
-        exit(EXIT_FAILURE);
+    id = msgget(MSG_KEY, 0666);
+    if (id != -1) {
+        msgctl(id, IPC_RMID, NULL);
     }
 
-    daily_users = 0;
-    for(int i = 0; i < config -> NOF_WORKER_SEATS; i++){
-        daily_users += counters[i].queue;
+    id = semget(SEM_KEY, 1, 0666);
+    if (id != -1) {
+        semctl(id, 0, IPC_RMID, 0);
     }
 
-    tot_users += daily_users;
-
-    int daily_served = 0;
-    for(int i = 0; i < config -> NOF_WORKER_SEATS; i++){
-        daily_served += counters[i].served_requests;
+    id = shmget(SHM_CONFIG_KEY, 1, 0666);
+    if (id != -1) {
+        shmctl(id, IPC_RMID, NULL);
     }
 
-    for(int i = 0; i < config -> NOF_WORKER_SEATS; i++){
-        tot_serv += counters[i].served_requests;
+    id = shmget(SHM_COUNTERS_KEY, 1, 0666);
+    if (id != -1) {
+        shmctl(id, IPC_RMID, NULL);
     }
 
-    double daily_avg_serv = counters[0].served_requests;
-    for(int i = 1; i < config -> NOF_WORKER_SEATS; i++){
-        daily_avg_serv += counters[i].served_requests;
-        daily_avg_serv = daily_avg_serv / 2; 
+    id = shmget(SHM_WORKERS_KEY, 1, 0666);
+    if (id != -1) {
+        shmctl(id, IPC_RMID, NULL);
     }
 
-    if(avg_serv == 0) avg_serv = daily_avg_serv;
-    else avg_serv = (avg_serv + daily_avg_serv) / 2;
-
-    daily_nserv = 0;
-    for(int i = 0; i < config -> NOF_WORKER_SEATS; i++){
-        daily_nserv += (counters[i].queue - counters[i].served_requests);
+    id = shmget(SHM_USERS_KEY, 1, 0666);
+    if (id != -1) {
+        shmctl(id, IPC_RMID, NULL);
     }
 
-    daily_nserv += (daily_users - daily_served - daily_nserv);
-
-    for(int i = 0; i < config -> NOF_WORKER_SEATS; i++){
-        tot_nserv += (counters[i].queue - counters[i].served_requests);
+    id = shmget(SHM_STATS_KEY, 1, 0666);
+    if (id != -1) {
+        shmctl(id, IPC_RMID, NULL);
     }
 
-    double daily_avg_nserv = (counters[0].queue - counters[0].served_requests);
-    for(int i = 1; i < config -> NOF_WORKER_SEATS; i++){
-        daily_avg_nserv += (counters[i].queue - counters[i].served_requests);
-        daily_avg_nserv = daily_avg_nserv / 2; 
+    id = shmget(SHM_QUEUES_KEY, 1, 0666);
+    if (id != -1) {
+        shmctl(id, IPC_RMID, NULL);
     }
+}
 
-    if(avg_nserv == 0) avg_nserv = daily_avg_nserv;
-    else avg_nserv = (avg_nserv + daily_avg_nserv) / 2;
-    
-    if(avg_twtime == 0) avg_twtime = avg_dwtime;
-    else avg_twtime = (avg_twtime + avg_dwtime) / 2;
-    
-    if(avg_tdtime == 0) avg_tdtime = avg_ddtime;
-    else avg_tdtime = (avg_tdtime + avg_ddtime) / 2;
-
-    printf("D - USERS = %d\n"
-        "T - USERS = %d\n"
-        "D - Users Served = %d\n"
-        "T - Users Served = %d\n"
-        "D - Average Users Served = %f\n"
-        "T - Average Users Served = %f\n"
-        "D - Requests Served = %d\n"
-        "T - Requests Served = %d\n"
-        "D - Requests Not Served = %d\n"
-        "T - Requests Not Served = %d\n"
-        "D - Average Requests Served = %f\n"
-        "T - Average Requests Served = %f\n"
-        "D - Average Requests Not Served = %f\n"
-        "T - Average Requests Not Served = %f\n"
-        "D - Average Waiting Time = %f\n"
-        "T - Average Waiting Time = %f\n"
-        "D - Average Delivery Service Time = %f\n"
-        "T - Average Delivery Service Time = %f\n", 
-        daily_users, tot_users, daily_served, 
-        tot_serv, daily_avg_serv, avg_serv, daily_served, 
-        tot_serv, daily_nserv, tot_nserv, daily_avg_serv, 
-        avg_serv, daily_avg_nserv, avg_nserv, avg_dwtime, 
-        avg_twtime, avg_ddtime, avg_tdtime);
-
-    avg_dwtime = 0;
-    avg_ddtime = 0;
-
-    if (semop(semid_log, &(struct sembuf){0, 1, 0}, 1) == -1) {
-        perror("Error unlocking semaphore");
+static void set_sem_value(int sem_num, int value) {
+    if (semctl(semid, sem_num, SETVAL, value) == -1) {
+        perror("semctl SETVAL");
         exit(EXIT_FAILURE);
     }
 }
 
-/**
- * @brief Sets up the counters with operator PIDs and assigns random roles.
- * @param NOF_WORKERS Number of workers.
- * @param NOF_WORKER_SEATS Number of worker seats.
- * @param pid_operators Array of operator PIDs.
- * @param counters Array of counters.
- */
-void setting_up_counters(int NOF_WORKERS, int NOF_WORKER_SEATS, pid_t *pid_operators, counter *counters) {
-    static int seed_initialized = 0;
-    if (!seed_initialized) {
-        srand(time(NULL));
-        seed_initialized = 1;
-    }
+static int sem_op_retry(int sem_num, short sem_op) {
+    struct sembuf operation = {.sem_num = (unsigned short) sem_num, .sem_op = sem_op, .sem_flg = 0};
 
-    int min_roles = NOF_WORKER_SEATS / 6; // Numero minimo di worker per ogni ruolo
-    int extra_roles = NOF_WORKER_SEATS % 6; // Ruoli che avranno un worker in più
+    while (semop(semid, &operation, 1) == -1) {
+        if (errno == EINTR) {
+            if (shutdown_requested) {
+                return -1;
+            }
 
-    int tracking_counters[6] = {0};
-
-    // Assegna ruoli in modo bilanciato
-    int index = 0;
-    for (int role = 0; role < 6; ++role) {
-        int count = min_roles + (role < extra_roles ? 1 : 0);
-        for (int j = 0; j < count; ++j) {
-            counters[index].purpose = role;
-            tracking_counters[role]++;
-            index++;
-        }
-    }
-
-    // Mescola i ruoli per renderli casuali
-    for (int i = NOF_WORKER_SEATS - 1; i > 0; --i) {
-        int j = rand() % (i + 1);
-        int temp = counters[i].purpose;
-        counters[i].purpose = counters[j].purpose;
-        counters[j].purpose = temp;
-    }
-
-    // Assegna worker ai counter
-    int min_workers = NOF_WORKERS < NOF_WORKER_SEATS ? NOF_WORKERS : NOF_WORKER_SEATS;
-    for (int i = 0; i < min_workers; ++i) {
-        counters[i].worker_id = pid_operators[i];
-
-        struct msgbuffer msg;
-
-        msg.mtype = getpid() + pid_operators[i];
-        msg.mtext = counters[i].purpose; 
-
-        if (msgsnd(msgid, &msg, sizeof(msg.mtext), 0) == -1) {
-            perror("Error sending PID");
-            exit(EXIT_FAILURE);
+            continue;
         }
 
+        return -1;
     }
-    
-    /*
-    // Stampa i counter
-    printf("Counters:");
-    for (int i = 0; i < NOF_WORKER_SEATS; ++i) {
-        printf("%d: Purpose=%d, Worker=%d", counters[i].counter_id, counters[i].purpose, counters[i].worker_id);
-    } */
+
+    return 0;
 }
 
-/**
- * @brief Signal handler for SIGTERM.
- * @param signal The signal number.
- */
-void handle_signal(int signal){
-    // SIGTERM --> kill all the Processes before exiting
-    if (signal == SIGTERM){
-        printf("Received SIGTERM, exiting");
-        printf("Cleaning up...");
-
-        // Terminate and wait for all operator processes
-        for (int i = 0; i < config->NOF_WORKERS; ++i) {
-            kill(pid_operators[i], SIGTERM);
-            waitpid(pid_operators[i], NULL, 0);
-        }
-
-        // Terminate and wait for all user processes
-        for (int i = 0; i < config->NOF_USERS; ++i) {
-            kill(pid_users[i], SIGTERM);
-            waitpid(pid_users[i], NULL, 0);
-        }
-
-        // Terminate and wait for the ticket creator process
-        kill(pid_et, SIGTERM);
-        waitpid(pid_et, NULL, 0);
-
-        // Sleep to ensure all processes have terminated
-        sleep(config->NOF_WORKERS + config->NOF_USERS + 1);
-
-        // Free allocated memory and clean up shared resources
-        free(pid_operators);
-        free(pid_users);
-        shmctl(shmid_config, IPC_RMID, NULL);
-        shmctl(shmid_counters, IPC_RMID, NULL);
-        semctl(semid, 0, IPC_RMID, 0);
-        printf("Cleaned up!");
-        printf("Goodbye! :(");
-
-        printf("--------------------------------------------------------");
-        exit(EXIT_FAILURE);
-    } else {
-        printf("Received unknown signal: %d", signal);
-        printf("Cleaning up...");
-
-        // Terminate and wait for all operator processes
-        for (int i = 0; i < config->NOF_WORKERS; ++i) {
-            kill(pid_operators[i], SIGTERM);
-            waitpid(pid_operators[i], NULL, 0);
-        }
-
-        // Terminate and wait for all user processes
-        for (int i = 0; i < config->NOF_USERS; ++i) {
-            kill(pid_users[i], SIGTERM);
-            waitpid(pid_users[i], NULL, 0);
-        }
-
-        // Terminate and wait for the ticket creator process
-        kill(pid_et, SIGTERM);
-        waitpid(pid_et, NULL, 0);
-
-        // Sleep to ensure all processes have terminated
-        sleep(config->NOF_WORKERS + config->NOF_USERS + 1);
-
-        // Free allocated memory and clean up shared resources
-        free(pid_operators);
-        free(pid_users);
-        shmctl(shmid_config, IPC_RMID, NULL);
-        shmctl(shmid_counters, IPC_RMID, NULL);
-        semctl(semid, 0, IPC_RMID, 0);
-        printf("Cleaned up!");
-        printf("Goodbye! :(");
-
-        printf("--------------------------------------------------------");
+static void lock_stats(void) {
+    if (sem_op_retry(stats_mutex_sem(config->NOF_WORKER_SEATS), -1) == -1) {
+        perror("lock stats");
         exit(EXIT_FAILURE);
     }
 }
 
-/**
- * @brief Reads configuration data from a file.
- * @param config Configuration parameters.
- * @param fp File pointer to the configuration file.
- * @return 0 on success, 1 on error.
- */
-int scan_data(parameter config, FILE* fp) {
+static void unlock_stats(void) {
+    if (sem_op_retry(stats_mutex_sem(config->NOF_WORKER_SEATS), 1) == -1) {
+        perror("unlock stats");
+        exit(EXIT_FAILURE);
+    }
+}
+
+static void reset_day_statistics(void) {
+    lock_stats();
+    memset(&stats->day_by_service, 0, sizeof(stats->day_by_service));
+    stats->day_users_served = 0;
+    stats->day_services_served = 0;
+    stats->day_services_not_served = 0;
+    stats->day_wait_minutes_sum = 0.0;
+    stats->day_service_minutes_sum = 0.0;
+    stats->day_pause_total = 0;
+    unlock_stats();
+}
+
+static void reset_workers_day_state(void) {
+    int i;
+
+    for (i = 0; i < config->NOF_WORKERS; ++i) {
+        workers[i].active_today = 0;
+        workers[i].pauses_today = 0;
+        workers[i].current_counter = -1;
+    }
+}
+
+static int read_config_file(const char *path) {
+    FILE *fp;
+    char key[128];
     int value;
-    char name_param[100];
-    int error = 1;
-    while(fscanf(fp, "%s %d", name_param, &value) != EOF) {
-        if(strcmp(name_param, "NOF_WORKER_SEATS") == 0) {
+
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        perror("fopen");
+        return -1;
+    }
+
+    while (fscanf(fp, "%127s %d", key, &value) == 2) {
+        if (strcmp(key, "NOF_WORKER_SEATS") == 0) {
             config->NOF_WORKER_SEATS = value;
-            error = 0;
-        } else if(strcmp(name_param, "NOF_WORKERS") == 0) {
+        } else if (strcmp(key, "NOF_WORKERS") == 0) {
             config->NOF_WORKERS = value;
-            error = 0;
-        } else if(strcmp(name_param, "NOF_USERS") == 0) {
+        } else if (strcmp(key, "NOF_USERS") == 0) {
             config->NOF_USERS = value;
-            error = 0;
-        } else if(strcmp(name_param, "NOF_PAUSE") == 0) {
+        } else if (strcmp(key, "NOF_PAUSE") == 0) {
             config->NOF_PAUSE = value;
-            error = 0;
-        } else if(strcmp(name_param, "SIM_DURATION") == 0) {
-            config->SIM_DURATION = value;
-            error = 0;
-        } else if(strcmp(name_param, "P_SERV_MIN") == 0) {
+        } else if (strcmp(key, "P_SERV_MIN") == 0) {
             config->P_SERV_MIN = value;
-            error = 0;
-        } else if(strcmp(name_param, "P_SERV_MAX") == 0) {
+        } else if (strcmp(key, "P_SERV_MAX") == 0) {
             config->P_SERV_MAX = value;
-            error = 0;
-        } else if(strcmp(name_param, "N_NANO_SECONDS") == 0) {
+        } else if (strcmp(key, "SIM_DURATION") == 0) {
+            config->SIM_DURATION = value;
+        } else if (strcmp(key, "N_NANO_SECONDS") == 0) {
             config->N_NANO_SECONDS = value;
-            error = 0;
-        } else if(strcmp(name_param, "EXPLODE_THRESHOLD") == 0) {
+        } else if (strcmp(key, "EXPLODE_THRESHOLD") == 0) {
             config->EXPLODE_THRESHOLD = value;
-            error = 0;
         } else {
-            error = 1;
+            fprintf(stderr, "Parametro sconosciuto nel file di config: %s\n", key);
+            fclose(fp);
+            return -1;
         }
     }
-    appinfo_log("Data read from file!");
-    return error;
+
+    fclose(fp);
+
+    if (config->NOF_WORKER_SEATS <= 0 || config->NOF_WORKERS <= 0 ||
+        config->NOF_USERS <= 0 || config->SIM_DURATION <= 0 ||
+        config->N_NANO_SECONDS <= 0) {
+        fprintf(stderr, "Configurazione non valida\n");
+        return -1;
+    }
+
+    if (config->P_SERV_MIN > config->P_SERV_MAX) {
+        fprintf(stderr, "Intervallo P_SERV non valido\n");
+        return -1;
+    }
+
+    config->P_SERV_MIN = clamp_percentage(config->P_SERV_MIN);
+    config->P_SERV_MAX = clamp_percentage(config->P_SERV_MAX);
+    config->CURRENT_DAY = 0;
+    config->DAY_ACTIVE = 0;
+    config->TERMINATION_CAUSE = TERMINATION_NONE;
+    return 0;
 }
 
-/**
- * @brief Generates a new user process.
- * @return PID of the new user process.
- */
+static void allocate_ipc(void) {
+    shmid_counters = shmget(SHM_COUNTERS_KEY, sizeof(counter) * config->NOF_WORKER_SEATS, IPC_CREAT | 0666);
+    shmid_workers = shmget(SHM_WORKERS_KEY, sizeof(worker_info) * config->NOF_WORKERS, IPC_CREAT | 0666);
+    shmid_users = shmget(SHM_USERS_KEY, sizeof(user_info) * config->NOF_USERS, IPC_CREAT | 0666);
+    shmid_stats = shmget(SHM_STATS_KEY, sizeof(simulation_stats), IPC_CREAT | 0666);
+    shmid_queues = shmget(SHM_QUEUES_KEY, sizeof(service_queue) * SERVICE_COUNT, IPC_CREAT | 0666);
+    msgid = msgget(MSG_KEY, IPC_CREAT | 0666);
+    semid = semget(SEM_KEY, total_sems(config->NOF_WORKER_SEATS), IPC_CREAT | 0666);
 
-pid_t user_generator(void) {
-    fflush(stdout);
-    pid_t pid_user;
+    if (shmid_counters == -1 || shmid_workers == -1 || shmid_users == -1 ||
+        shmid_stats == -1 || shmid_queues == -1 || msgid == -1 || semid == -1) {
+        perror("IPC allocation");
+        exit(EXIT_FAILURE);
+    }
 
-    switch ((pid_user = fork())) {
-        case -1:
-            TEST_ERROR;
-            perror("Error forking the process!");
-            exit(EXIT_FAILURE);
+    counters = shmat(shmid_counters, NULL, 0);
+    workers = shmat(shmid_workers, NULL, 0);
+    users = shmat(shmid_users, NULL, 0);
+    stats = shmat(shmid_stats, NULL, 0);
+    queues = shmat(shmid_queues, NULL, 0);
 
-        case 0: {
-            /* nel figlio, ricaviamo il PID e lo convertiamo in stringa */
-            char pid_str[32];
-            snprintf(pid_str, sizeof(pid_str), "%ld", (long)pid_et);
+    if (counters == (void *) -1 || workers == (void *) -1 || users == (void *) -1 ||
+        stats == (void *) -1 || queues == (void *) -1) {
+        perror("shmat");
+        exit(EXIT_FAILURE);
+    }
+}
 
-            /* execvp: argv[0] = USER_PATH, argv[1] = pid_str, argv[2] = NULL */
-            execvp(USER_PATH, (char* const[]){
-                USER_PATH,
-                pid_str,
-                NULL
-            });
+static void initialize_shared_state(void) {
+    int i;
 
-            /* se execvp torna, è fallita */
-            perror("Error starting the user!");
+    memset(counters, 0, sizeof(counter) * config->NOF_WORKER_SEATS);
+    memset(workers, 0, sizeof(worker_info) * config->NOF_WORKERS);
+    memset(users, 0, sizeof(user_info) * config->NOF_USERS);
+    memset(stats, 0, sizeof(simulation_stats));
+    memset(queues, 0, sizeof(service_queue) * SERVICE_COUNT);
+
+    for (i = 0; i < config->NOF_WORKER_SEATS; ++i) {
+        counters[i].counter_id = i;
+        counters[i].service = -1;
+        counters[i].worker_pid = -1;
+    }
+
+    for (i = 0; i < config->NOF_WORKERS; ++i) {
+        workers[i].service = rand() % SERVICE_COUNT;
+        workers[i].current_counter = -1;
+    }
+
+    for (i = 0; i < config->NOF_USERS; ++i) {
+        int interval = config->P_SERV_MAX - config->P_SERV_MIN + 1;
+        users[i].go_probability = config->P_SERV_MIN + (rand() % interval);
+    }
+
+    for (i = 0; i < config->NOF_WORKER_SEATS; ++i) {
+        set_sem_value(counter_mutex_sem(i), 1);
+    }
+
+    for (i = 0; i < SERVICE_COUNT; ++i) {
+        set_sem_value(service_queue_mutex_sem(config->NOF_WORKER_SEATS, i), 1);
+        set_sem_value(service_jobs_sem(config->NOF_WORKER_SEATS, i), 0);
+        set_sem_value(service_free_counter_sem(config->NOF_WORKER_SEATS, i), 0);
+        service_queue_reset(&queues[i]);
+    }
+
+    set_sem_value(stats_mutex_sem(config->NOF_WORKER_SEATS), 1);
+}
+
+static void send_signal_to_users(int signal) {
+    int i;
+
+    for (i = 0; i < config->NOF_USERS; ++i) {
+        if (users[i].pid > 0) {
+            kill(users[i].pid, signal);
+        }
+    }
+}
+
+static void send_signal_to_workers(int signal) {
+    int i;
+
+    for (i = 0; i < config->NOF_WORKERS; ++i) {
+        if (workers[i].pid > 0) {
+            kill(workers[i].pid, signal);
+        }
+    }
+}
+
+static pid_t spawn_process(const char *path, const char *arg1, const char *arg2) {
+    pid_t pid = fork();
+
+    if (pid == -1) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid == 0) {
+        if (arg1 != NULL && arg2 != NULL) {
+            execl(path, path, arg1, arg2, (char *) NULL);
+        } else if (arg1 != NULL) {
+            execl(path, path, arg1, (char *) NULL);
+        } else {
+            execl(path, path, (char *) NULL);
+        }
+
+        perror("execl");
+        _exit(EXIT_FAILURE);
+    }
+
+    return pid;
+}
+
+static void create_children(void) {
+    int i;
+    char index_arg[32];
+    char director_pid_arg[32];
+
+    snprintf(director_pid_arg, sizeof(director_pid_arg), "%ld", (long) getpid());
+
+    ticket_pid = spawn_process(TICKET_PATH, NULL, NULL);
+
+    for (i = 0; i < config->NOF_WORKERS; ++i) {
+        snprintf(index_arg, sizeof(index_arg), "%d", i);
+        workers[i].pid = spawn_process(OPERATOR_PATH, index_arg, director_pid_arg);
+    }
+
+    for (i = 0; i < config->NOF_USERS; ++i) {
+        snprintf(index_arg, sizeof(index_arg), "%d", i);
+        users[i].pid = spawn_process(USER_PATH, index_arg, director_pid_arg);
+    }
+}
+
+static void wait_for_initialization(void) {
+    int expected = config->NOF_WORKERS + config->NOF_USERS + 1;
+    int received = 0;
+
+    while (received < expected) {
+        director_message message;
+
+        if (msgrcv(msgid, &message, sizeof(message) - sizeof(long), DIRECTOR_MTYPE, 0) == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            perror("msgrcv init");
             exit(EXIT_FAILURE);
         }
 
-        default:
-            return pid_user;
+        if (message.kind == DIRECTOR_MSG_INIT) {
+            received += 1;
+        }
     }
 }
 
-/**
- * @brief Generates a new user process.
- * @return PID of the new user process.
- */
-pid_t operator_generator(void) {
-    fflush(stdout);
-    pid_t pid_operator;
-    pid_t master_pid = getpid();
+static void assign_daily_counters(int counters_per_service[SERVICE_COUNT]) {
+    int i;
 
-    switch ((pid_operator = fork())) {
-        case -1:
-            TEST_ERROR;
-            perror("Error forking the process!");
-            exit(EXIT_FAILURE);
+    memset(counters_per_service, 0, sizeof(int) * SERVICE_COUNT);
 
-        case 0: {
-            /* nel figlio, ricaviamo il PID e lo convertiamo in stringa */
-            char pid_str[32];
-            snprintf(pid_str, sizeof(pid_str), "%ld", (long)master_pid);
+    for (i = 0; i < config->NOF_WORKER_SEATS; ++i) {
+        int service = rand() % SERVICE_COUNT;
 
-            /* execvp: argv[0] = OPERATOR_PATH, argv[1] = pid_str, argv[2] = NULL */
-            execvp(OPERATOR_PATH, (char* const[]){
-                OPERATOR_PATH,
-                pid_str,
-                NULL
-            });
-
-            /* se execvp torna, è fallita */
-            perror("Error starting the operator!");
+        if (sem_op_retry(counter_mutex_sem(i), -1) == -1) {
+            perror("lock counter");
             exit(EXIT_FAILURE);
         }
 
-        default:
-            return pid_operator;
+        counters[i].service = service;
+        counters[i].worker_pid = -1;
+
+        if (sem_op_retry(counter_mutex_sem(i), 1) == -1) {
+            perror("unlock counter");
+            exit(EXIT_FAILURE);
+        }
+
+        counters_per_service[service] += 1;
+    }
+
+    for (i = 0; i < SERVICE_COUNT; ++i) {
+        set_sem_value(service_jobs_sem(config->NOF_WORKER_SEATS, i), 0);
+        set_sem_value(service_free_counter_sem(config->NOF_WORKER_SEATS, i), counters_per_service[i]);
+        service_queue_reset(&queues[i]);
     }
 }
 
-/**
- * @brief Generates a new ticket creator process.
- * @return PID of the new ticket creator process.
- */
-pid_t et_generator() {
-    fflush(stdout);
-    pid_t pid_et;
-    switch (pid_et = fork()) {
-        case -1:
-            TEST_ERROR;
-            perror("Error forking the process!");
-            exit(EXIT_FAILURE);
-        case 0:
-            execvp(EROGATORE_TICKET_PATH, (char* const[]) {NULL});
-            perror("Error starting the activator!");
-            exit(EXIT_FAILURE);
-        default:
-            return pid_et;
+static int count_workers_for_service(int service) {
+    int i;
+    int count = 0;
+
+    for (i = 0; i < config->NOF_WORKERS; ++i) {
+        if (workers[i].service == service) {
+            count += 1;
+        }
+    }
+
+    return count;
+}
+
+static void print_service_statistics_line(const char *label,
+                                          const service_stats *daily,
+                                          const service_stats *total,
+                                          int day_number) {
+    double daily_wait = daily->served > 0 ? daily->wait_minutes_sum / daily->served : 0.0;
+    double total_wait = total->served > 0 ? total->wait_minutes_sum / total->served : 0.0;
+    double daily_service = daily->served > 0 ? daily->service_minutes_sum / daily->served : 0.0;
+    double total_service = total->served > 0 ? total->service_minutes_sum / total->served : 0.0;
+
+    printf("  %s\n", label);
+    printf("    giornata: serviti=%ld non_serviti=%ld attesa_media=%.2f min erogazione_media=%.2f min\n",
+           daily->served, daily->not_served, daily_wait, daily_service);
+    printf("    totale:   serviti=%ld non_serviti=%ld media_serviti_giorno=%.2f media_non_serviti_giorno=%.2f attesa_media=%.2f min erogazione_media=%.2f min\n",
+           total->served,
+           total->not_served,
+           (double) total->served / day_number,
+           (double) total->not_served / day_number,
+           total_wait,
+           total_service);
+}
+
+static void print_daily_statistics(int day_number, const int counters_per_service[SERVICE_COUNT]) {
+    int i;
+    int active_today = 0;
+    int active_total = 0;
+    long day_users_served;
+    long total_users_served;
+    long day_services_served;
+    long total_services_served;
+    long day_not_served;
+    long total_not_served;
+    double day_wait_avg;
+    double total_wait_avg;
+    double day_service_avg;
+    double total_service_avg;
+    long day_pause_total;
+    long total_pause_total;
+
+    for (i = 0; i < config->NOF_WORKERS; ++i) {
+        if (workers[i].active_today) {
+            active_today += 1;
+        }
+        if (workers[i].active_ever) {
+            active_total += 1;
+        }
+    }
+
+    lock_stats();
+    day_users_served = stats->day_users_served;
+    total_users_served = stats->total_users_served;
+    day_services_served = stats->day_services_served;
+    total_services_served = stats->total_services_served;
+    day_not_served = stats->day_services_not_served;
+    total_not_served = stats->total_services_not_served;
+    day_wait_avg = stats->day_services_served > 0 ? stats->day_wait_minutes_sum / stats->day_services_served : 0.0;
+    total_wait_avg = stats->total_services_served > 0 ? stats->total_wait_minutes_sum / stats->total_services_served : 0.0;
+    day_service_avg = stats->day_services_served > 0 ? stats->day_service_minutes_sum / stats->day_services_served : 0.0;
+    total_service_avg = stats->total_services_served > 0 ? stats->total_service_minutes_sum / stats->total_services_served : 0.0;
+    day_pause_total = stats->day_pause_total;
+    total_pause_total = stats->total_pause_total;
+
+    printf("\n=== GIORNO %d ===\n", day_number);
+    printf("Utenti serviti: giornata=%ld totale=%ld media_giornaliera=%.2f\n",
+           day_users_served,
+           total_users_served,
+           (double) total_users_served / day_number);
+    printf("Servizi erogati: giornata=%ld totale=%ld media_giornaliera=%.2f\n",
+           day_services_served,
+           total_services_served,
+           (double) total_services_served / day_number);
+    printf("Servizi non erogati: giornata=%ld totale=%ld media_giornaliera=%.2f\n",
+           day_not_served,
+           total_not_served,
+           (double) total_not_served / day_number);
+    printf("Tempo medio di attesa: giornata=%.2f min simulazione=%.2f min\n", day_wait_avg, total_wait_avg);
+    printf("Tempo medio di erogazione: giornata=%.2f min simulazione=%.2f min\n", day_service_avg, total_service_avg);
+    printf("Operatori attivi: giornata=%d simulazione=%d\n", active_today, active_total);
+    printf("Pause: media_giornata=%.2f totale_simulazione=%ld\n",
+           active_today > 0 ? (double) day_pause_total / active_today : 0.0,
+           total_pause_total);
+    printf("Statistiche per servizio:\n");
+
+    for (i = 0; i < SERVICE_COUNT; ++i) {
+        print_service_statistics_line(service_names[i], &stats->day_by_service[i], &stats->total_by_service[i], day_number);
+    }
+
+    printf("Rapporto operatori disponibili / sportelli esistenti:\n");
+    for (i = 0; i < config->NOF_WORKER_SEATS; ++i) {
+        int service = counters[i].service;
+        int available_workers = count_workers_for_service(service);
+        int seats = counters_per_service[service];
+        double ratio = seats > 0 ? (double) available_workers / seats : 0.0;
+
+        printf("  sportello %d (%s): %d/%d = %.2f\n",
+               i,
+               service_names[service],
+               available_workers,
+               seats,
+               ratio);
+    }
+    unlock_stats();
+}
+
+static void print_final_statistics(void) {
+    const char *cause = "UNKNOWN";
+    double total_wait_avg;
+    double total_service_avg;
+
+    if (config->TERMINATION_CAUSE == TERMINATION_TIMEOUT) {
+        cause = "timeout";
+    } else if (config->TERMINATION_CAUSE == TERMINATION_EXPLODE) {
+        cause = "explode";
+    }
+
+    lock_stats();
+    total_wait_avg = stats->total_services_served > 0 ? stats->total_wait_minutes_sum / stats->total_services_served : 0.0;
+    total_service_avg = stats->total_services_served > 0 ? stats->total_service_minutes_sum / stats->total_services_served : 0.0;
+    printf("\n=== FINE SIMULAZIONE ===\n");
+    printf("Causa terminazione: %s\n", cause);
+    printf("Giorni simulati: %d\n", config->CURRENT_DAY);
+    printf("Utenti serviti totali: %ld\n", stats->total_users_served);
+    printf("Servizi erogati totali: %ld\n", stats->total_services_served);
+    printf("Servizi non erogati totali: %ld\n", stats->total_services_not_served);
+    printf("Tempo medio di attesa complessivo: %.2f min\n", total_wait_avg);
+    printf("Tempo medio di erogazione complessivo: %.2f min\n", total_service_avg);
+    unlock_stats();
+}
+
+static void send_user_reply(pid_t user_pid, int status, int service) {
+    user_reply_message reply;
+
+    reply.mtype = USER_REPLY_BASE + user_pid;
+    reply.status = status;
+    reply.service = service;
+
+    while (msgsnd(msgid, &reply, sizeof(reply) - sizeof(long), 0) == -1) {
+        if (errno == EINTR) {
+            continue;
+        }
+
+        perror("msgsnd user reply");
+        exit(EXIT_FAILURE);
     }
 }
 
-/**
-* @brief Main function to start the simulation.
-* @return Exit status.
-*/
-int main(int argc, char const *argv[]) {
+static int flush_pending_users(void) {
+    int service;
+    int pending_total = 0;
+
+    for (service = 0; service < SERVICE_COUNT; ++service) {
+        if (sem_op_retry(service_queue_mutex_sem(config->NOF_WORKER_SEATS, service), -1) == -1) {
+            perror("lock service queue");
+            exit(EXIT_FAILURE);
+        }
+
+        while (service_queue_length(&queues[service]) > 0) {
+            queue_ticket ticket = service_queue_pop(&queues[service]);
+
+            pending_total += 1;
+            send_user_reply(ticket.user_pid, USER_REPLY_NOT_SERVED, service);
+
+            lock_stats();
+            stats->day_services_not_served += 1;
+            stats->total_services_not_served += 1;
+            stats->day_by_service[service].not_served += 1;
+            stats->total_by_service[service].not_served += 1;
+            unlock_stats();
+        }
+
+        if (sem_op_retry(service_queue_mutex_sem(config->NOF_WORKER_SEATS, service), 1) == -1) {
+            perror("unlock service queue");
+            exit(EXIT_FAILURE);
+        }
+
+        set_sem_value(service_jobs_sem(config->NOF_WORKER_SEATS, service), 0);
+    }
+
+    return pending_total;
+}
+
+static void wait_for_workers_day_end(void) {
+    int received = 0;
+
+    while (received < config->NOF_WORKERS) {
+        director_message message;
+
+        if (msgrcv(msgid, &message, sizeof(message) - sizeof(long), DIRECTOR_MTYPE, 0) == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            perror("msgrcv day finished");
+            exit(EXIT_FAILURE);
+        }
+
+        if (message.kind == DIRECTOR_MSG_DAY_FINISHED) {
+            received += 1;
+        }
+    }
+}
+
+static int count_pending_users(void) {
+    int service;
+    int total = 0;
+
+    for (service = 0; service < SERVICE_COUNT; ++service) {
+        if (sem_op_retry(service_queue_mutex_sem(config->NOF_WORKER_SEATS, service), -1) == -1) {
+            perror("lock queue count");
+            exit(EXIT_FAILURE);
+        }
+
+        total += service_queue_length(&queues[service]);
+
+        if (sem_op_retry(service_queue_mutex_sem(config->NOF_WORKER_SEATS, service), 1) == -1) {
+            perror("unlock queue count");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    return total;
+}
+
+static void sleep_for_day_duration(void) {
+    struct timespec request;
+    struct timespec remaining;
+    long long duration_ns = minutes_to_ns(WORKDAY_MINUTES, config->N_NANO_SECONDS);
+
+    request.tv_sec = duration_ns / 1000000000LL;
+    request.tv_nsec = duration_ns % 1000000000LL;
+
+    while (nanosleep(&request, &remaining) == -1) {
+        if (errno != EINTR) {
+            perror("nanosleep");
+            exit(EXIT_FAILURE);
+        }
+
+        if (shutdown_requested) {
+            break;
+        }
+
+        request = remaining;
+    }
+}
+
+static void stop_children(void) {
+    int i;
+    int status;
+
+    if (ticket_pid > 0) {
+        kill(ticket_pid, SIGTERM);
+    }
+
+    send_signal_to_workers(SIGTERM);
+    send_signal_to_users(SIGTERM);
+
+    for (i = 0; i < config->NOF_WORKERS; ++i) {
+        if (workers[i].pid > 0) {
+            waitpid(workers[i].pid, &status, 0);
+        }
+    }
+
+    for (i = 0; i < config->NOF_USERS; ++i) {
+        if (users[i].pid > 0) {
+            waitpid(users[i].pid, &status, 0);
+        }
+    }
+
+    if (ticket_pid > 0) {
+        waitpid(ticket_pid, &status, 0);
+    }
+}
+
+static void cleanup_ipc(void) {
+    if (config != NULL && config != (void *) -1) {
+        shmdt(config);
+    }
+    if (counters != NULL && counters != (void *) -1) {
+        shmdt(counters);
+    }
+    if (workers != NULL && workers != (void *) -1) {
+        shmdt(workers);
+    }
+    if (users != NULL && users != (void *) -1) {
+        shmdt(users);
+    }
+    if (stats != NULL && stats != (void *) -1) {
+        shmdt(stats);
+    }
+    if (queues != NULL && queues != (void *) -1) {
+        shmdt(queues);
+    }
+
+    if (msgid != -1) {
+        msgctl(msgid, IPC_RMID, NULL);
+    }
+    if (semid != -1) {
+        semctl(semid, 0, IPC_RMID, 0);
+    }
+    if (shmid_config != -1) {
+        shmctl(shmid_config, IPC_RMID, NULL);
+    }
+    if (shmid_counters != -1) {
+        shmctl(shmid_counters, IPC_RMID, NULL);
+    }
+    if (shmid_workers != -1) {
+        shmctl(shmid_workers, IPC_RMID, NULL);
+    }
+    if (shmid_users != -1) {
+        shmctl(shmid_users, IPC_RMID, NULL);
+    }
+    if (shmid_stats != -1) {
+        shmctl(shmid_stats, IPC_RMID, NULL);
+    }
+    if (shmid_queues != -1) {
+        shmctl(shmid_queues, IPC_RMID, NULL);
+    }
+}
+
+int main(int argc, char *argv[]) {
+    struct sigaction sa;
+    int day;
+    int counters_per_service[SERVICE_COUNT];
 
     if (argc != 2) {
-        fprintf(stderr, "Usage: <config_file>\n");
+        fprintf(stderr, "Uso: %s <config_file>\n", argv[0]);
         return EXIT_FAILURE;
     }
 
+    srand((unsigned int) (time(NULL) ^ getpid()));
     log_init("log/so2025.log");
 
-    struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = handle_signal;
-    
-    if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        perror("Error setting SIGTERM handler");
-        syserr_log("Error setting SIGTERM handler");
-        exit(EXIT_FAILURE);
-    }
+    sa.sa_handler = handle_director_signal;
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
 
-    // CREATE CONFIG SHARED MEMORY
+    cleanup_stale_ipc_resources();
+
     shmid_config = shmget(SHM_CONFIG_KEY, sizeof(struct simulation_parameter), IPC_CREAT | 0666);
     if (shmid_config == -1) {
-        perror("Error creating shared memory");
-        syserr_log("Error creating shared memory");
-        return (-1);
+        perror("shmget config");
+        return EXIT_FAILURE;
     }
 
-    config = (parameter) shmat(shmid_config, NULL, 0);
-    if (config == (void*) -1) {
-        perror("Error attaching shared memory");
-        syserr_log("Error attaching shared memory");
-        shmctl(shmid_config, IPC_RMID, NULL);
-        return (-1);
+    config = shmat(shmid_config, NULL, 0);
+    if (config == (void *) -1) {
+        perror("shmat config");
+        return EXIT_FAILURE;
     }
 
-    // READ CONFIG
-    FILE *fp = fopen(argv[1], "r");
-    if (fp == NULL){
-        perror("Error opening file");
-        syserr_log("Error opening file");
-        return (-1);
+    if (read_config_file(argv[1]) == -1) {
+        cleanup_ipc();
+        return EXIT_FAILURE;
     }
 
-    if(scan_data(config, fp) == 1) {
-        perror("Error reading data from file");
-        syserr_log("Error reading data from file");
-        return (-1);
-    }
-    
-    fclose(fp);
+    allocate_ipc();
+    initialize_shared_state();
+    create_children();
+    wait_for_initialization();
 
-    msgid = msgget(MSG_KEY, 0666 | IPC_CREAT);
-    if (msgid == -1) {
-        perror("Error getting message queue");
-        exit(EXIT_FAILURE);
-    }
+    printf("Simulazione avviata: %d giorni, %d utenti, %d operatori, %d sportelli\n",
+           config->SIM_DURATION,
+           config->NOF_USERS,
+           config->NOF_WORKERS,
+           config->NOF_WORKER_SEATS);
+    printf("Assunzione implementativa: una giornata lavorativa dura %d minuti simulati.\n", WORKDAY_MINUTES);
 
-    sysinfo_log("All IPCs structure correctly initialised");
+    for (day = 1; day <= config->SIM_DURATION && !shutdown_requested; ++day) {
+        int pending_before_flush;
 
-    appinfo_log("--------------------------------------------------------\n"
-                "NOF_WORKER_SEATS: %d\n"
-                "NOF_WORKERS: %d\n"
-                "NOF_USERS: %d\n"
-                "NOF_PAUSE: %d\n"
-                "P_SERV_MIN: %d\n"
-                "P_SERV_MAX: %d\n"
-                "SIM_DURATION: %d\n"
-                "N_NANO_SECONDS: %d\n"
-                "EXPLODE_THRESHOLD: %d\n"
-                "--------------------------------------------------------",
-                config->NOF_WORKER_SEATS, config->NOF_WORKERS, config->NOF_USERS,
-                config->NOF_PAUSE, config->P_SERV_MIN, config->P_SERV_MAX,
-                config->SIM_DURATION, config->N_NANO_SECONDS, config->EXPLODE_THRESHOLD);
+        config->CURRENT_DAY = day;
+        reset_day_statistics();
+        reset_workers_day_state();
+        assign_daily_counters(counters_per_service);
+        config->DAY_ACTIVE = 1;
 
-        // Create counters
-    printf("Initialising Counters shared memory...");
-    fflush(stdout);
-    shmid_counters = shmget(SHM_COUNTERS_KEY, sizeof(counter) * config->NOF_WORKER_SEATS, IPC_CREAT | 0666);
-    if (shmid_counters == -1) {
-        perror("Error creating shared memory");
-        shmctl(shmid_config, IPC_RMID, NULL);
-        free(pid_operators);
-        free(pid_users);
-        return (-1);
-    }
+        send_signal_to_workers(SIGUSR1);
+        send_signal_to_users(SIGUSR1);
 
-    counters = (counter*) shmat(shmid_counters, NULL, 0);
-    if (counters == (void*) -1) {
-        perror("Error attaching shared memory");
-        shmctl(shmid_config, IPC_RMID, NULL);
-        shmctl(shmid_counters, IPC_RMID, NULL);
-        return (-1);
-    }
+        sleep_for_day_duration();
 
-    for (int i = 0; i < config->NOF_WORKER_SEATS; ++i) {
-        memset(&counters[i], 0, sizeof counters[i]);
-        counters[i].counter_id = i;
-        counters[i].purpose = i % 6;
-        counters[i].worker_id = -1;
-        memset(counters[i].pid_array, 0, sizeof counters[i].pid_array);
-        counters[i].queue = 0;
-        counters[i].served_requests = 0; 
-    }
-    sleep(1);
-    sysinfo_log("Initialised n. %d Counters in SHM", config->NOF_WORKER_SEATS);
-    fflush(stdout);
+        config->DAY_ACTIVE = 0;
+        send_signal_to_workers(SIGUSR2);
+        send_signal_to_users(SIGUSR2);
+        wait_for_workers_day_end();
 
-    // Create semaphores for counters
-    printf("Initialising Semaphores...");
-    fflush(stdout);
-    semid = semget(SEM_KEY, (config->NOF_WORKER_SEATS + 1), IPC_CREAT | 0666);
-    if (semid == -1) {
-        perror("Error creating semaphores");
-        shmctl(shmid_config, IPC_RMID, NULL);
-        free(pid_operators);
-        free(pid_users);
-        shmctl(shmid_counters, IPC_RMID, NULL);
-        return (-1);
-    }
+        pending_before_flush = count_pending_users();
 
-    for (int i = 0; i < (config->NOF_WORKER_SEATS + 1); ++i) {
-        semctl(semid, i, SETVAL, 1);
-    }
-
-    semid_log = semget(LOGSEM_KEY, 1, IPC_CREAT | 0666);
-    if (semid_log == -1) {
-        perror("Error creating semaphores");
-        shmctl(shmid_config, IPC_RMID, NULL);
-        free(pid_operators);
-        free(pid_users);
-        shmctl(shmid_counters, IPC_RMID, NULL);
-        return (-1);
-    }
-
-    semctl(semid_log, 0, SETVAL, 1);
-
-    sleep(1);
-    sysinfo_log("Initialised n. %d Semaphores", config->NOF_WORKER_SEATS + 1);
-    fflush(stdout);
-
-    // Create ticket creator process
-    fflush(stdout);
-    pid_et = et_generator();
-    sleep(1);
-    sysinfo_log("Ticket Creator initialised correctly");
-    fflush(stdout);
-
-    // Create operator processes
-    printf("Forking Operators...");
-    fflush(stdout);
-    pid_operators = (pid_t*) malloc(sizeof(pid_t) * config->NOF_WORKERS);
-    for (int i = 0; i < config->NOF_WORKERS; ++i) {
-        pid_t pid_operator = operator_generator();
-        pid_operators[i] = pid_operator;
-    }
-    sleep(1);
-    sysinfo_log("Forked n. %d Operator processes", config->NOF_WORKERS);
-    fflush(stdout);
-
-    // Create user processes
-    printf("Forking Users...");
-    fflush(stdout);
-    pid_users = (pid_t*) malloc(sizeof(pid_t) * config->NOF_USERS);
-    for (int i = 0; i < config->NOF_USERS; ++i) {
-        pid_t pid_user = user_generator();
-        pid_users[i] = pid_user;
-    }
-    sleep(1);
-    sysinfo_log("Forked n. %d User processes", config->NOF_USERS);
-    fflush(stdout);
-
-    printf("--------------------------------------------------------");
-
-    // Start the simulation
-    printf("Starting simulation...");
-
-    
-    if (pthread_create(&time_receiver_thread, NULL, time_receiver, NULL) != 0) {
-        printf("Errore nella creazione del thread\n");
-        return 1;
-    }
-
-    kill(pid_et, SIGUSR1);
-    printf("--------------------------------------------------------");
-
-    // Run the simulation for the specified duration
-    for (int i = 0; i < config->SIM_DURATION; ++i) {
-
-        for (int i = 0; i < config->NOF_WORKERS; ++i) {
-            kill(pid_operators[i], SIGUSR1);
+        if (pending_before_flush > config->EXPLODE_THRESHOLD) {
+            config->TERMINATION_CAUSE = TERMINATION_EXPLODE;
         }
 
-        setting_up_counters(config->NOF_WORKERS, config->NOF_WORKER_SEATS, pid_operators, counters);
+        flush_pending_users();
+        print_daily_statistics(day, counters_per_service);
 
-        for (int i = 0; i < config->NOF_WORKERS; ++i) {
-            srand(time(NULL));
-            pid_t temp = pid_operators[i];
-            int random_index = rand() % config->NOF_WORKERS;
-            pid_operators[i] = pid_operators[random_index];
-            pid_operators[random_index] = temp; 
+        if (config->TERMINATION_CAUSE == TERMINATION_EXPLODE) {
+            break;
         }
-
-        for (int i = 0; i < config->NOF_USERS; ++i) {
-            kill(pid_users[i], SIGUSR1);
-        }
-
-        sleep(1);
-
-        printf("Day %d", i+1);
-        
-        printf("--------------------------------------------------------");
-
-        print_log();
-
-        for(int i = 0; i < config->NOF_WORKER_SEATS; i++){
-            memset(&counters[i], 0, sizeof counters[i]);
-        }
-
-        if(daily_nserv >= config -> EXPLODE_THRESHOLD) {
-            printf("POSTAL COUNTER EXPLODED, TODAY %d PEOPLE WERE NOT SERVED!!!", daily_nserv);
-                kill(pid_et, SIGTERM);
-                waitpid(pid_et, NULL, 0);
-                free(pid_operators);
-                free(pid_users);
-                shmctl(shmid_config, IPC_RMID, NULL);
-                shmctl(shmid_counters, IPC_RMID, NULL);
-                semctl(semid, 0, IPC_RMID, 0);
-                log_stop();
-                printf("--------------------------------------------------------");
-                printf("Cleaned up!");
-                printf("Goodbye! :(");
-                printf("--------------------------------------------------------");
-
-                return 0;
-        }
-
-        printf("--------------------------------------------------------");
     }
 
-    // End the simulation
-    printf("Simulation ended!");
-    printf("--------------------------------------------------------");
+    if (config->TERMINATION_CAUSE == TERMINATION_NONE) {
+        config->TERMINATION_CAUSE = TERMINATION_TIMEOUT;
+    }
 
-    // Clean up resources
-    printf("Cleaning up...");
-    for (int i = 0; i < config->NOF_WORKERS; ++i) {
-        kill(pid_operators[i], SIGTERM);
-        waitpid(pid_operators[i], NULL, 0);
-    }
-    for (int i = 0; i < config->NOF_USERS; ++i) {
-        kill(pid_users[i], SIGTERM);
-        waitpid(pid_users[i], NULL, 0);
-    }
-    printf("--------------------------------------------------------");
-    kill(pid_et, SIGTERM);
-    waitpid(pid_et, NULL, 0);
-    free(pid_operators);
-    free(pid_users);
-    shmctl(shmid_config, IPC_RMID, NULL);
-    shmctl(shmid_counters, IPC_RMID, NULL);
-    semctl(semid, 0, IPC_RMID, 0);
-    printf("Cleaned up!");
-    printf("--------------------------------------------------------");
-    printf("Goodbye! :)");
-    printf("--------------------------------------------------------");
+    print_final_statistics();
+    stop_children();
+    cleanup_ipc();
     log_stop();
-    return 0;
+    return EXIT_SUCCESS;
 }

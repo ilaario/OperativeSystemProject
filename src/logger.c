@@ -78,6 +78,8 @@ int write_on_system_log(const char* buffer, char* program_name) {
         return EINVAL;
     }
 
+    (void)buffer;
+
 #if defined(LINUX) || defined(MACOS)
     openlog(program_name, LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL1);
     // syslog(LOG_MAKEPRI(LOG_LOCAL1, LOG_NOTICE), "Program started by User %d", getuid());
@@ -141,8 +143,8 @@ int write_buffer(const char* buffer, log_level level) {
                              "%d/%m/%Y - %H:%M.%S", &tm_info);
     ts_len += snprintf(ts + ts_len,
                        sizeof(ts) - ts_len,
-                       ".%03ld",
-                       tv.tv_usec / 1000);
+                       ".%03d",
+                       (int)(tv.tv_usec / 1000));
 
     /* 2) Preparo il prefix una volta sola */
     char prefix[PREFIX_BUFSZ];
@@ -158,12 +160,7 @@ int write_buffer(const char* buffer, log_level level) {
     }
 
     /* 3) Preparo la stringa di dashes lunga quanto prefix_len */
-    unsigned char* temp = (unsigned char*)malloc(5 * sizeof(unsigned char));
-    sprintf((char*)temp, "%d", (int)getpid());
-    int pidChars = 0;
-    while(temp[pidChars] != '\0') pidChars++;
-
-    char dashes[DASHES_BUFSZ + pidChars];
+    char dashes[PREFIX_BUFSZ];
     int n_dashes = prefix_len < (int)sizeof(dashes) ? prefix_len : (int)sizeof(dashes)-1;
     memset(dashes, '-', n_dashes);
     dashes[n_dashes] = '\0';

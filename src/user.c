@@ -1,217 +1,195 @@
 #include "headers/user.h"
 
-// Global variables
-parameter config; // Configuration parameters
-counter *counters; // Array of counters
-int semid; // Semaphore ID
-int msgid; // Message queue ID
+static parameter config;
+static user_info *users;
+static int msgid = -1;
 
-pid_t ticket_generator_pid;
+static int user_index = -1;
+static volatile sig_atomic_t day_started = 0;
+static volatile sig_atomic_t day_closed = 0;
+static volatile sig_atomic_t terminate_requested = 0;
 
-int probability = -1; // Probability of a user going to a counter
-
-/**
- * @brief Simulates a user going to a counter.
- * @return 0 on success, -1 on error.
- */
-int going_to_counter() {
-    srand(time(NULL) ^ getpid());
-
-    int going_to_counter = rand() % probability;  // Always 100 for testing
-    if (going_to_counter >= 50){
-        probability = probability - 50;
-    } else {
-        probability = probability + 25;
+static void handle_user_signal(int signal) {
+    if (signal == SIGUSR1) {
+        day_started = 1;
+        day_closed = 0;
+    } else if (signal == SIGUSR2) {
+        day_closed = 1;
+    } else if (signal == SIGTERM) {
+        terminate_requested = 1;
+        day_started = 1;
+        day_closed = 1;
     }
+}
 
-#ifdef DEBUGLOG
-    going_to_counter = 100;
-#endif
+static void send_director_message(int kind) {
+    director_message message;
 
-    if (going_to_counter >= 50) {
+    message.mtype = DIRECTOR_MTYPE;
+    message.kind = kind;
+    message.index = user_index;
+    message.pid = getpid();
 
-#ifdef DEBUGLOG
-        printf("GOING TO POST OFFICE");
-#endif
-
-        clock_t start = clock();
-        int ticket_request = rand() % 6;
-
-        int pid = getpid();
-
-        struct msgbuffer msg;
-
-        msg.mtype = ticket_generator_pid;
-        msg.mtext = pid; 
-
-        if (msgsnd(msgid, &msg, sizeof(msg.mtext), 0) == -1) {
-            perror("Error sending PID");
-            return -1;
+    while (msgsnd(msgid, &message, sizeof(message) - sizeof(long), 0) == -1) {
+        if (errno == EINTR) {
+            continue;
         }
 
-        msg.mtype = pid;
-        msg.mtext = ticket_request;
+        perror("msgsnd director");
+        exit(EXIT_FAILURE);
+    }
+}
 
-        if (msgsnd(msgid, &msg, sizeof(msg.mtext), 0) == -1) {
-            perror("Error sending message");
-            return -1;
-        }
+static void wait_for_next_day(void) {
+    sigset_t empty_mask;
 
-        if (msgrcv(msgid, &msg, sizeof(msg.mtext), getpid() + 10000, 0) == -1) {
-            perror("Error receiving message");
+    sigemptyset(&empty_mask);
+    while (!day_started && !terminate_requested) {
+        sigsuspend(&empty_mask);
+    }
+}
+
+static int sleep_until_arrival(int arrival_minute) {
+    struct timespec request;
+    struct timespec remaining;
+    long long duration_ns = minutes_to_ns(arrival_minute, config->N_NANO_SECONDS);
+
+    request.tv_sec = duration_ns / 1000000000LL;
+    request.tv_nsec = duration_ns % 1000000000LL;
+
+    while (nanosleep(&request, &remaining) == -1) {
+        if (errno != EINTR) {
+            perror("nanosleep user");
             exit(EXIT_FAILURE);
         }
 
-        // TODO Make standard values for work status
-        if(msg.mtext == 1) {
-            clock_t end = clock();
-            double time_spent = (double)(end - start) / CLOCKS_PER_SEC;
-
-            struct msgbuffer_time time;
-
-            time.mtype = 3000 + getppid() + ticket_request;
-            time.mtext = time_spent;
-
-#ifdef DEBUGLOG
-            printf("SENDING MSG TO %d", getppid());
-#endif
-
-            if (msgsnd(msgid, &time, sizeof(time.mtext), 0) == -1) {
-                perror("Error sending message");
-                exit(EXIT_FAILURE);
-            } 
-#ifdef DEBUGLOG
-            printf("WORK DONE");
-#endif
-
+        if (terminate_requested || day_closed || !config->DAY_ACTIVE) {
+            return 1;
         }
+
+        request = remaining;
     }
+
     return 0;
 }
 
-/**
- * @brief Signal handler for various signals.
- * @param signal The signal number.
- */
-void handle_signal(int signal){
-    if(signal == SIGUSR2){
-    } else if (signal == SIGTERM){
-        exit(EXIT_SUCCESS);
-    } else if (signal == SIGABRT){
-        printf("Received SIGABRT, exiting");
-        sleep(1);
-        fflush(stdout);
-        kill(getppid(), SIGTERM);
-    } else if (signal == SIGALRM){
-        // no action needed
-    } else if (signal == SIGINT){
-        printf("Received SIGINT, pausing");
-        fflush(stdout);
-    } else if (signal == SIGUSR1){
-        if(going_to_counter() != 0){
-            perror("Error going to counter");
-            kill(getpid(), SIGTERM);
-            exit(EXIT_FAILURE);
+static void request_service(int service) {
+    ticket_message message;
+    user_reply_message reply;
+
+    message.mtype = TICKET_REQUEST_MTYPE;
+    message.user_index = user_index;
+    message.user_pid = getpid();
+    message.service = service;
+
+    while (msgsnd(msgid, &message, sizeof(message) - sizeof(long), 0) == -1) {
+        if (errno == EINTR) {
+            if (terminate_requested) {
+                return;
+            }
+
+            continue;
         }
-    } else {
-        printf("Received unknown signal: %d", signal);
-        fflush(stdout);
+
+        perror("msgsnd ticket");
+        exit(EXIT_FAILURE);
+    }
+
+    while (msgrcv(msgid, &reply, sizeof(reply) - sizeof(long), USER_REPLY_BASE + getpid(), 0) == -1) {
+        if (errno == EINTR) {
+            if (terminate_requested) {
+                return;
+            }
+
+            continue;
+        }
+
+        perror("msgrcv user reply");
+        exit(EXIT_FAILURE);
     }
 }
 
-/**
- * @brief Main function to start the user process.
- * @return Exit status.
- */
-int main(int argc, char const *argv[]) {
+static void run_day(void) {
+    int go_probability = users[user_index].go_probability;
 
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <et_pid>\n", argv[0]);
-        return EXIT_FAILURE;
+    if ((rand() % 100) >= go_probability) {
+        return;
     }
 
-    /* argv[1] è la stringa con il PID */
-    char *endptr;
-    long tmp = strtol(argv[1], &endptr, 10);
-    if (*endptr != '\0') {
-        fprintf(stderr, "Invalid PID: %s\n", argv[1]);
-        return EXIT_FAILURE;
+    {
+        int requested_service = rand() % SERVICE_COUNT;
+        int arrival_minute = rand() % WORKDAY_MINUTES;
+
+        if (sleep_until_arrival(arrival_minute) != 0) {
+            return;
+        }
+
+        if (terminate_requested || day_closed || !config->DAY_ACTIVE) {
+            return;
+        }
+
+        request_service(requested_service);
     }
+}
 
-    ticket_generator_pid = (pid_t)tmp;
-
-    log_init("log/so2025.log");
-
-    // Connect to the shared memory
-    int shmid_config = shmget(SHM_CONFIG_KEY, sizeof(struct simulation_parameter), 0666);
-    if (shmid_config == -1) {
-        perror("Error getting shared memory");
-        return -1;
-    }
-
-    config = (parameter) shmat(shmid_config, NULL, 0);
-    if (config == (void*) -1) {
-        perror("Error attaching shared memory");
-        return -1;
-    }
-
+int main(int argc, char *argv[]) {
     struct sigaction sa;
+    char *endptr;
+    long director_pid;
+
+    if (argc != 3) {
+        fprintf(stderr, "Uso: %s <user_index> <director_pid>\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    user_index = (int) strtol(argv[1], &endptr, 10);
+    if (*endptr != '\0') {
+        fprintf(stderr, "user_index non valido\n");
+        return EXIT_FAILURE;
+    }
+
+    director_pid = strtol(argv[2], &endptr, 10);
+    if (*endptr != '\0') {
+        fprintf(stderr, "director_pid non valido\n");
+        return EXIT_FAILURE;
+    }
+    (void) director_pid;
+
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = handle_signal;
+    sa.sa_handler = handle_user_signal;
+    sigaction(SIGUSR1, &sa, NULL);
+    sigaction(SIGUSR2, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
 
-    if (sigaction(SIGUSR1, &sa, NULL) == -1) {
-        perror("Error setting SIGUSR1 handler");
-        exit(EXIT_FAILURE);
-    }
-    if (sigaction(SIGUSR2, &sa, NULL) == -1) {
-        perror("Error setting SIGUSR2 handler");
-        exit(EXIT_FAILURE);
-    }
-    if (sigaction(SIGINT, &sa, NULL) == -1) {
-        perror("Error setting SIGINT handler");
-        exit(EXIT_FAILURE);
-    }
-    if (sigaction(SIGALRM, &sa, NULL) == -1) {
-        perror("Error setting SIGALRM handler");
-        exit(EXIT_FAILURE);
-    }
-    if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        perror("Error setting SIGTERM handler");
-        exit(EXIT_FAILURE);
-    }
-    if (sigaction(SIGABRT, &sa, NULL) == -1) {
-        perror("Error setting SIGTERM handler");
-        exit(EXIT_FAILURE);
+    config = shmat(shmget(SHM_CONFIG_KEY, sizeof(struct simulation_parameter), 0666), NULL, 0);
+    if (config == (void *) -1) {
+        perror("user config attach");
+        return EXIT_FAILURE;
     }
 
-    int shmid_counters = shmget(SHM_COUNTERS_KEY, sizeof(counter) * config->NOF_WORKER_SEATS, 0666);
-    if (shmid_counters == -1) {
-        perror("Error getting shared memory");
-        exit(EXIT_FAILURE);
-    }
-
-    counters = (counter*) shmat(shmid_counters, NULL, 0);
-    if (counters == (void*) -1) {
-        perror("Error attaching shared memory");
-        exit(EXIT_FAILURE);
-    }
-
-    semid = semget(SEM_KEY, (config->NOF_WORKER_SEATS + 1), 0666);
-    if (semid == -1) {
-        perror("Error getting semaphores");
-        exit(EXIT_FAILURE);
-    }
-
+    users = shmat(shmget(SHM_USERS_KEY, sizeof(user_info) * config->NOF_USERS, 0666), NULL, 0);
     msgid = msgget(MSG_KEY, 0666);
-    if (msgid == -1) {
-        perror("Error getting message queue");
-        exit(EXIT_FAILURE);
+
+    if (users == (void *) -1 || msgid == -1) {
+        perror("user attach");
+        return EXIT_FAILURE;
     }
 
-    probability = config -> P_SERV_MAX;
+    srand((unsigned int) (time(NULL) ^ getpid()));
+    send_director_message(DIRECTOR_MSG_INIT);
 
-    fflush(stdout);
-    while(1){
-        pause();
+    while (!terminate_requested) {
+        wait_for_next_day();
+        if (terminate_requested) {
+            break;
+        }
+
+        day_started = 0;
+        day_closed = 0;
+        run_day();
     }
+
+    shmdt(config);
+    shmdt(users);
+    return EXIT_SUCCESS;
 }
